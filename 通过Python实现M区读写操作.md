@@ -1,48 +1,14 @@
-## 通过Python实现S7-1200输出控制
+## 通过Python实现M区读写操作
 
 *版权声明*
 
 *无需授权随便转载*
 
-## Snap7
-
-Snap7是一个开源的，支持32位和64位跨平台的通讯包组件，可以实现与西门子系列PLC进行数据读写操作，目前支持的PLC包括1200/1500，S7200，LOGO等。
-
-这个通讯包的好处显而易见，首先跨平台就可以实现在运行Linux的平台上进行与PLC的通讯，最常见的就是使用**Raspberry PI**控制PLC，而且使用这个通讯包也可以定制自己的软件，实现对PLC的读写操作，目前我主要是通过LabVIEW和C#控制PLC，后面我都会讲到。
-
-## Python-Snap7
-
-在讲这些之前，我发现网上已经有人把Snap7封装成了Python可以使用的组件，鉴于Python的流行度和易用性，我准备先从Python开始介入这款驱动，这些内容的主要目的还是给大家提供一种选择，具体的做法还得靠大家自己根据实际的需要慢慢研究。
-
-这里我使用的Python开发环境是Pycharm，具体使用方法我就不说了，大家自己研究吧，网上的帖子也很多。
-
-使用之前，需要将snap7.dll文件拷贝到系统路径下，如果是32位系统拷贝到*C:\WINDOW\system32*下面，如果是64位系统需要拷贝到*C:\Windows\sysWOW64*下面，Snap7最新的组件包可以通过*http://sourceforge.net/projects/snap7/files/*网址下载，当然点击阅读原文也可以从我提供的地址下载。
-
-之后还需要下载用于Python的Snap7，使用Pycharm作为开发环境，可以直接再Pycharm内下载并且安装Python-snap7，这些都准备好了，就可以开始编写代码了。Python-Snap7的官方网址*https://python-snap7.readthedocs.io/*
-
-PLC的环境还是使用TIA v14运行模拟器，通过NetToPLCsim连接PLCsim实现。具体的做法可以参考上一篇文章。
 
 
+## 读M区
 
-## 读输出映像区-Q区
-
-在进行读写操作之间，需要创建一个Client
-
-```python
-s71200 = snap7.client.Client()
-```
-
-创建Client之后，通过**connect**方法进行连接，connect方法定义如下
-
-```python
-def connect(self, address, rack, slot, tcpport=102)
-```
-
-其中**address**是服务器的IP地址，如果使用NetToPLCsim连接PLCsim，则IP地址应该是计算机的IP地址，**rack**和**slot**和NetToPLCsim设置的一样，针对S7-1200此处应该是0和1，端口默认是102，不需要进行更改
-
-连接后可以通过**get_connected**检查连接是否建立，返回值如果是True，则代表连接成功
-
-连接建立后，通过**read_area**方法获取PLC各个区的数值，read_area方法定义如下
+使用的方法依旧是read_area
 
 ```python
 def read_area(self, area, dbnumber, start, size)
@@ -52,27 +18,121 @@ def read_area(self, area, dbnumber, start, size)
 
 ![1560245900700](C:\Users\Dave-\AppData\Roaming\Typora\typora-user-images\1560245900700.png)
 
-**dbnumber**只针对DB块才有效，**start**为寄存区起始地址，**size**是读取数量
+**dbnumber**只针对DB块才有效，**start**为寄存区起始地址，**size**是寄存区长度
 
-读取输出映像区时，具体的参数如下
+针对的是M区，所有area参数需要使用**0x83**，size参数可以通过另外一个参数进行赋值
+
+![1560333018785](C:\Users\Dave-\AppData\Roaming\Typora\typora-user-images\1560333018785.png)
+
+对不同的数据类型，WordLen已经定义好了长度，可以直接作为size参数使用
+
+因为read_area方法返回的是byteArray类型的结果，可以通过get_bool，get_int，get_read，get_dword方法直接将byteArray类型转换成对应的数据类型
+
+定义一个**ReadMemory**的函数，代码如下
 
 ```python
-read_area(0x82, 0, 0, 1)
+def ReadMemory(dev,byte,bit,datatype):
+    result = dev.read_area(0x83,0,byte,datatype)
+    #size参数通过WordLen进行传递，之后对不同的类型进行判断，调用对应的get方法
+    #位
+    if datatype==S7WLBit:
+        return get_bool(result,0,bit)
+    #字节和字
+    elif datatype==S7WLByte or datatype==S7WLWord:
+        return get_int(result,0)
+    #浮点数
+    elif datatype==S7WLReal:
+        return get_real(result,0)
+    #双字
+    elif datatype==S7WLDWord:
+        return get_dword(result,0)
+    else:
+        return None
 ```
 
-**read_area**的返回值是**bytearray**类型，需要转换成2进制类型
-
-完整代码如下
+主函数调用**ReadMemory**函数，代码如下
 
 ```python
+def main():
+    s71200 = snap7.client.Client()
+    connect(s71200, '192.168.2.110', 0, 1)
+    while True:
+        try:
+            #410起始地址，因为是浮点数，所以读取的是MD410
+            print(ReadMemory(s71200, 410, 0, S7WLReal))
+            sleep(5)
+        except Snap7Exception as e:
+            connect(s71200, '192.168.2.110', 0, 1)
+```
+
+运行结果如下
+
+![](C:\Users\Dave-\Pictures\Snipaste_2019-06-12_17-58-43.png)
+
+
+
+
+
+## 写M区
+
+写M区跟上一篇写输出寄存器是一样的，都是先通过read_area获取值，通过set方法修改值，之后通过write_area写入值，不同的是，需要按照不同的数据类型，调用不同的set方法。
+
+定义一个**WriteMemory**函数，代码如下
+
+```python
+def WriteMemory(dev,byte,bit,datatype,value):
+    result = dev.read_area(0x83,0,byte,datatype)
+    #不同的数据类型，调用不同的set方法
+    if datatype==S7WLBit:
+        set_bool(result,0,bit,value)
+    elif datatype==S7WLByte or datatype==S7WLWord:
+        set_int(result,0,value)
+    elif datatype==S7WLReal:
+        set_real(result,0,value)
+    elif datatype==S7WLDWord:
+        set_dword(result,0,value)
+    #通过write_area方法写入值到PLC
+    dev.write_area(0x83,0,byte,result)
+```
+
+主函数调用**WriteMemory**函数，代码如下
+
+```python
+def main():
+    s71200 = snap7.client.Client()
+    connect(s71200, '192.168.2.110', 0, 1)
+    while True:
+        try:
+            print(ReadMemory(s71200, 410, 0, S7WLReal))
+            sleep(1)
+            #420代表起始地址，这里写入的地址是MD420
+            WriteMemory(s71200, 420, 0, S7WLReal, 78.65)
+            sleep(1)
+            print(ReadMemory(s71200, 420, 0, S7WLReal))
+            sleep(5)
+        except Snap7Exception as e:
+            connect(s71200, '192.168.2.110', 0, 1)
+```
+
+运行结果如下
+
+![](C:\Users\Dave-\Pictures\Snipaste_2019-06-12_18-18-23.png)
+
+
+
+## 完整代码
+
+```python
+from time import sleep
 import snap7
 from snap7.snap7exceptions import Snap7Exception
-from time import sleep
+from snap7.util import *
+from snap7.snap7types import *
 
 def connect(device, ip, rack, slot):
     while True:
         # check connection
-        if device.get_connected()://如果
+        if device.get_connected():
             break
         try:
             # attempt connection
@@ -80,18 +140,45 @@ def connect(device, ip, rack, slot):
         except:
             pass
         sleep(5)
-     
-def ReadOutput(dev):
-    data = dev.read_area(0x82,0,0,1)
-    binary_list = [int(x) for x in bin(data[0])[2:]]
-    print(binary_list)
-    
+
+
+def ReadMemory(dev,byte,bit,datatype):
+    result = dev.read_area(0x83,0,byte,datatype)
+    if datatype==S7WLBit:
+        return get_bool(result,0,bit)
+    elif datatype==S7WLByte or datatype==S7WLWord:
+        return get_int(result,0)
+    elif datatype==S7WLReal:
+        return get_real(result,0)
+    elif datatype==S7WLDWord:
+        return get_dword(result,0)
+    else:
+        return None
+
+
+def WriteMemory(dev,byte,bit,datatype,value):
+    result = dev.read_area(0x83,0,byte,datatype)
+    if datatype==S7WLBit:
+        set_bool(result,0,bit,value)
+    elif datatype==S7WLByte or datatype==S7WLWord:
+        set_int(result,0,value)
+    elif datatype==S7WLReal:
+        set_real(result,0,value)
+    elif datatype==S7WLDWord:
+        set_dword(result,0,value)
+    dev.write_area(0x83,0,byte,result)
+
+
 def main():
     s71200 = snap7.client.Client()
     connect(s71200, '192.168.2.110', 0, 1)
     while True:
         try:
-            ReadOutput(s71200)
+            print(ReadMemory(s71200, 410, 0, S7WLReal))
+            sleep(1)
+            WriteMemory(s71200, 420, 0, S7WLReal, 78.65)
+            sleep(1)
+            print(ReadMemory(s71200, 420, 0, S7WLReal))
             sleep(5)
         except Snap7Exception as e:
             connect(s71200, '192.168.2.110', 0, 1)
@@ -99,12 +186,4 @@ def main():
 if __name__ == '__main__':
     main()
 ```
-
-输出的结果
-
-```python
-[1, 0, 0, 0, 0, 0, 1, 0]
-```
-
-![1560248366116](C:\Users\Dave-\AppData\Roaming\Typora\typora-user-images\1560248366116.png)
 

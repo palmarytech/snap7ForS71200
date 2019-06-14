@@ -2,8 +2,6 @@ db=\
 """
 Temperature Real 0.0
 Cold Bool 4.0
-RPis_to_Buy Int 6.0
-Db_test_String String 8.0
 """
 offsets = { "Bool":2,"Int": 2,"Real":4,"DInt":6,"String":256}
 itemlist = filter(lambda a: a!='',db.split('\n'))

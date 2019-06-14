@@ -1,4 +1,4 @@
-## 通过Python实现M区读写操作
+## 通过Python实现DB区读写操作(一)
 
 *版权声明*
 
@@ -78,7 +78,7 @@ DB001 Real 0.0
 DB002 Bool 4.0
 DB003 Int 6.0
 DB004 String 8.0
-DB005 Real 264
+DB005 Real 264.0
 """
 ```
 
@@ -96,56 +96,166 @@ DB005 Real 264
 
 之后可以通过for方法依次取出每一个键值，传递到read_area方法中。
 
-### 定义DBRead函数
+### 定义DBRead()函数
 
-
-
-## 写M区
-
-写M区跟上一篇写输出寄存器是一样的，都是先通过read_area获取值，通过set方法修改值，之后通过write_area写入值，不同的是，需要按照不同的数据类型，调用不同的set方法。
-
-定义一个**WriteMemory**函数，代码如下
+这里希望DBRead函数中的参数如下代码所示：
 
 ```python
-def WriteMemory(dev,byte,bit,datatype,value):
-    result = dev.read_area(0x83,0,byte,datatype)
-    #不同的数据类型，调用不同的set方法
-    if datatype==S7WLBit:
-        set_bool(result,0,bit,value)
-    elif datatype==S7WLByte or datatype==S7WLWord:
-        set_int(result,0,value)
-    elif datatype==S7WLReal:
-        set_real(result,0,value)
-    elif datatype==S7WLDWord:
-        set_dword(result,0,value)
-    #通过write_area方法写入值到PLC
-    dev.write_area(0x83,0,byte,result)
+def DBRead(dev,db_num,db_len,db_items):
 ```
 
-主函数调用**WriteMemory**函数，代码如下
+dev参数是设备名称，db_num是DB块编号，db_len是DB块中所有数据总长度，db_items是DB块中数据，它的数据结构应该和上图所示的字典列表一致。
+
+首先通过**read_area**获取DB块中的数据，代码如下
 
 ```python
-def main():
-    s71200 = snap7.client.Client()
-    connect(s71200, '192.168.2.110', 0, 1)
-    while True:
-        try:
-            print(ReadMemory(s71200, 410, 0, S7WLReal))
-            sleep(1)
-            #420代表起始地址，这里写入的地址是MD420
-            WriteMemory(s71200, 420, 0, S7WLReal, 78.65)
-            sleep(1)
-            print(ReadMemory(s71200, 420, 0, S7WLReal))
-            sleep(5)
-        except Snap7Exception as e:
-            connect(s71200, '192.168.2.110', 0, 1)
+data = plc.read_area(0x84,db_num,0,db_len):
 ```
 
-运行结果如下
+通过**for**循环以此取出db_items中的字典，通过键判断数据类型和偏移量，之后调用对应的get方法，代码如下
 
-![](C:\Users\Dave-\Pictures\Snipaste_2019-06-12_18-18-23.png)
+```python
+for item in db_items:
+        value = None
+        #取出数据的偏移量
+        offset = int(item['bytebit'].split('.')[0])
+		#通过键datatype获取数据类型，调用不同的get方法
+        if item['datatype']=='Real':
+            value = get_real(data,offset)
 
+        if item['datatype']=='Bool':
+            bit =int(item['bytebit'].split('.')[1])
+            value = get_bool(data,offset,bit)
 
+        if item['datatype']=='Int':
+            value = get_int(data, offset)
+
+        if item['datatype']=='String':
+            value = get_string(data, offset)
+```
+
+完整**DBRead**函数的代码如下
+
+```python
+def DBRead(dev,db_num,db_len,db_items):
+    data = dev.read_area(0x84,db_num,0,db_len)
+    obj = DBObject()
+    for item in db_items:
+        value = None
+        offset = int(item['bytebit'].split('.')[0])
+
+        if item['datatype']=='Real':
+            value = get_real(data,offset)
+
+        if item['datatype']=='Bool':
+            bit =int(item['bytebit'].split('.')[1])
+            value = get_bool(data,offset,bit)
+
+        if item['datatype']=='Int':
+            value = get_int(data, offset)
+
+        if item['datatype']=='String':
+            value = get_string(data, offset)
+
+        obj.__setattr__(item['name'], value)
+
+    return obj
+```
+
+DBRead函数中还需要知道db_len的值，所以还需要定义一个函数去获得DB块中数据的总长度
+
+### 定义get_db_len()函数
+
+通过下图
+
+![1560418884428](C:\Users\Dave-\AppData\Roaming\Typora\typora-user-images\1560418884428.png)
+
+可以看出，数据的总长度其实就是最后一个数据的偏移量的数值加上自生所占的数据长度，如图五个数据的总长度应该是**264 + 4 = 268**，所以get_db_len()函数只要找到偏移量最大的数，在获得这个偏移量对用的数据类型所占的内存长度，相加后就可以得到整个数据长度。
+
+```python
+def get_db_len(db_items,bytebit,datatype):
+```
+
+**db_items**和DBRead函数中的一致，**bytebit**和**datatype**是db_items中字典的两个键名，通过
+
+```python
+offset_str,datatype =[(x[bytebit]) for x in db_items],[x[datatype] for x in db_items]
+```
+
+获得偏移量和数据类型的列表，结果应该如下
+
+```python
+offset_str = ['0.0','4.0','6.0','8.0','264.0'],datatype = [Real,Bool,Int,String,Real]
+```
+
+因为获取的offset值均为字符串，所有没法正确获取最大值，需要将字符串列表转换为整数的列表，代码如下
+
+```python
+for x in offset_str:
+	offset_int.append(int(x.split('.')[0]))
+```
+
+之后通过**index**方法获得offset中最大值的索引值，通过此索引值获得datatype列表中的数据类型，代码如下
+
+```python
+idx = offset_int.index(max(offset_int)) #结果=4
+```
+
+为了得到不同数据类型占用内存的长度，需要先定义一个字典，可以通过不同的数据类型取出对应的内存长度，如下
+
+```python
+offsets = { "Bool":2,"Int": 2,"Real":4,"DInt":6,"String":256}
+```
+
+之后便可获得DB块中数据总长度，如下
+
+```python
+db_len = (max(offset_int)) + int(offsets[datatype[idx]]) #结果=264+4=268
+```
+
+完整的**get_db_len()**函数如下
+
+```python
+def get_db_len(db_items,bytebit,datatype):
+    offset_int = []
+    offset_str,datatype =[(x[bytebit]) for x in db_items],[x[datatype] for x in db_items]
+    for x in offset_str:
+        offset_int.append(int(x.split('.')[0]))
+    idx = offset_int.index(max(offset_int)) #结果=4
+    db_len = (max(offset_int)) + int(offsets[datatype[idx]]) #结果=264+4=268
+    return db_len
+```
+
+至此，两个函数全部定义完了，接下来需要在主函数中构造db_items列表
+
+### 主函数
+
+通过如下的代码构造db_items列表
+
+```python
+itemlist = filter(lambda a: a!='',db.split('\n'))
+    space=''
+    items = [
+        {
+            "name":x.split(space)[0],
+            "datatype":x.split(space)[1],
+            "bytebit":x.split(space)[2]
+         } for x in itemlist
+    		]
+```
+
+通过上面的两个函数获得DB块中的数据
+
+```python
+db_len = get_db_len(items, 'bytebit', 'datatype')
+DB_obj = DBRead(s71200, 1, db_len, items)
+print(DB_obj.DB001, DB_obj.DB002, DB_obj.DB003, DB_obj.DB004, DB_obj.DB005)
+sleep(5)
+```
+
+最终结果如下
+
+![](H:\snap7ForS71200\Snipaste_2019-06-14_20-17-21.png)
 
 ## 完整代码
 
@@ -154,7 +264,21 @@ from time import sleep
 import snap7
 from snap7.snap7exceptions import Snap7Exception
 from snap7.util import *
-from snap7.snap7types import *
+
+db = \
+"""
+DB001 Real 0.0
+DB002 Bool 4.0
+DB003 Int 6.0
+DB004 String 8.0
+DB005 Real 264.0
+"""
+
+offsets = { "Bool":2,"Int": 2,"Real":4,"DInt":6,"String":256}
+
+class DBObject(object):
+    pass
+
 
 def connect(device, ip, rack, slot):
     while True:
@@ -169,46 +293,59 @@ def connect(device, ip, rack, slot):
         sleep(5)
 
 
-def ReadMemory(dev,byte,bit,datatype):
-    result = dev.read_area(0x83,0,byte,datatype)
-    if datatype==S7WLBit:
-        return get_bool(result,0,bit)
-    elif datatype==S7WLByte or datatype==S7WLWord:
-        return get_int(result,0)
-    elif datatype==S7WLReal:
-        return get_real(result,0)
-    elif datatype==S7WLDWord:
-        return get_dword(result,0)
-    else:
-        return None
+def DBRead(dev,db_num,db_len,db_items):
+    data = dev.read_area(0x84,db_num,0,db_len)
+    obj = DBObject()
+    for item in db_items:
+        value = None
+        offset = int(item['bytebit'].split('.')[0])
 
+        if item['datatype']=='Real':
+            value = get_real(data,offset)
 
-def WriteMemory(dev,byte,bit,datatype,value):
-    result = dev.read_area(0x83,0,byte,datatype)
-    if datatype==S7WLBit:
-        set_bool(result,0,bit,value)
-    elif datatype==S7WLByte or datatype==S7WLWord:
-        set_int(result,0,value)
-    elif datatype==S7WLReal:
-        set_real(result,0,value)
-    elif datatype==S7WLDWord:
-        set_dword(result,0,value)
-    dev.write_area(0x83,0,byte,result)
+        if item['datatype']=='Bool':
+            bit =int(item['bytebit'].split('.')[1])
+            value = get_bool(data,offset,bit)
 
+        if item['datatype']=='Int':
+            value = get_int(data, offset)
+
+        if item['datatype']=='String':
+            value = get_string(data, offset, 256)
+
+        obj.__setattr__(item['name'], value)
+
+    return obj
+
+def get_db_len(db_items,bytebit,datatype):
+    offset_int = []
+    offset_str,datatype =[(x[bytebit]) for x in db_items],[x[datatype] for x in db_items]
+    for x in offset_str:
+        offset_int.append(int(x.split('.')[0]))
+    idx = offset_int.index(max(offset_int)) #结果=4
+    db_len = (max(offset_int)) + int(offsets[datatype[idx]]) #结果=264+4=268
+    return db_len
 
 def main():
     s71200 = snap7.client.Client()
-    connect(s71200, '192.168.2.110', 0, 1)
+    connect(s71200, '192.168.2.111', 0, 1)
     while True:
         try:
-            print(ReadMemory(s71200, 410, 0, S7WLReal))
-            sleep(1)
-            WriteMemory(s71200, 420, 0, S7WLReal, 78.65)
-            sleep(1)
-            print(ReadMemory(s71200, 420, 0, S7WLReal))
+            itemlist = filter(lambda a: a != '', db.split('\n'))
+            space = ' '
+            items = [
+                {
+                    "name": x.split(space)[0],
+                    "datatype": x.split(space)[1],
+                    "bytebit": x.split(space)[2]
+                } for x in itemlist
+            ]
+            db_len = get_db_len(items, 'bytebit', 'datatype')
+            DB_obj = DBRead(s71200, 1, db_len, items)
+            print(DB_obj.DB001, DB_obj.DB002, DB_obj.DB003, DB_obj.DB004, DB_obj.DB005)
             sleep(5)
         except Snap7Exception as e:
-            connect(s71200, '192.168.2.110', 0, 1)
+            connect(s71200, '192.168.2.111', 0, 1)
 
 if __name__ == '__main__':
     main()

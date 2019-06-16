@@ -11,6 +11,7 @@
 		<Property Name="server.vi.propertiesEnabled" Type="Bool">true</Property>
 		<Property Name="specify.custom.address" Type="Bool">false</Property>
 		<Item Name="connect_S71200.vi" Type="VI" URL="../connect_S71200.vi"/>
+		<Item Name="DBRead.vi" Type="VI" URL="../DBRead.vi"/>
 		<Item Name="Dependencies" Type="Dependencies">
 			<Item Name="Snap7.net.dll" Type="Document" URL="../../../snap7-full-1.4.2/examples/dot.net/WinForm/BuildSnap7Assembly/bin/x64/Debug/Snap7.net.dll"/>
 		</Item>
